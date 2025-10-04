@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import './App.css';
 
 function App() {
@@ -6,15 +6,65 @@ function App() {
   const [showVideo, setShowVideo] = useState(true);
   const [isRunning, setIsRunning] = useState(false);
   const [progress, setProgress] = useState(0);
+  const [stream, setStream] = useState<MediaStream | null>(null);
+  const [webcamError, setWebcamError] = useState<string | null>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const progressIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
-  const handleStart = () => {
+  // Webcam functions
+  const startWebcam = async () => {
+    try {
+      setWebcamError(null);
+      const mediaStream = await navigator.mediaDevices.getUserMedia({ 
+        video: { 
+          width: { ideal: 640 },
+          height: { ideal: 480 }
+        }, 
+        audio: false 
+      });
+      setStream(mediaStream);
+      if (videoRef.current) {
+        videoRef.current.srcObject = mediaStream;
+      }
+    } catch (error) {
+      console.error('Error accessing webcam:', error);
+      setWebcamError('Unable to access webcam. Please check permissions.');
+    }
+  };
+
+  const stopWebcam = () => {
+    if (stream) {
+      stream.getTracks().forEach(track => track.stop());
+      setStream(null);
+    }
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
+    }
+  };
+
+  // Cleanup webcam on unmount
+  useEffect(() => {
+    return () => {
+      stopWebcam();
+      if (progressIntervalRef.current) {
+        clearInterval(progressIntervalRef.current);
+      }
+    };
+  }, []);
+
+  const handleStart = async () => {
     setIsRunning(true);
-    // Simulate progress for demo
-    const interval = setInterval(() => {
+    await startWebcam();
+    
+    // Start progress simulation
+    progressIntervalRef.current = setInterval(() => {
       setProgress(prev => {
         if (prev >= 100) {
-          clearInterval(interval);
+          if (progressIntervalRef.current) {
+            clearInterval(progressIntervalRef.current);
+          }
           setIsRunning(false);
+          stopWebcam();
           return 0;
         }
         return prev + 1;
@@ -25,6 +75,21 @@ function App() {
   const handleStop = () => {
     setIsRunning(false);
     setProgress(0);
+    stopWebcam();
+    if (progressIntervalRef.current) {
+      clearInterval(progressIntervalRef.current);
+    }
+  };
+
+  const toggleVideo = () => {
+    setShowVideo(!showVideo);
+    if (!showVideo && isRunning) {
+      // If turning video back on and session is running, restart webcam
+      startWebcam();
+    } else if (showVideo && isRunning) {
+      // If turning video off and session is running, stop webcam
+      stopWebcam();
+    }
   };
 
   return (
@@ -44,18 +109,35 @@ function App() {
 
       {/* Main Content */}
       <main className="flex flex-col items-center px-6 max-w-4xl mx-auto">
-        {/* Video Placeholder */}
+        {/* Video Section */}
         <div className="relative mb-8">
           {showVideo ? (
-            <div className="w-96 h-64 bg-gray-800 rounded-lg border-2 border-gray-700 flex items-center justify-center">
-              <div className="text-center">
-                <div className="w-16 h-16 bg-gray-600 rounded-full flex items-center justify-center mx-auto mb-4">
-                  <svg className="w-8 h-8 text-gray-400" fill="currentColor" viewBox="0 0 20 20">
-                    <path d="M2 6a2 2 0 012-2h6a2 2 0 012 2v8a2 2 0 01-2 2H4a2 2 0 01-2-2V6zM14.553 7.106A1 1 0 0014 8v4a1 1 0 00.553.894l2 1A1 1 0 0018 13V7a1 1 0 00-1.447-.894l-2 1z"/>
-                  </svg>
+            <div className="w-96 h-64 bg-gray-800 rounded-lg border-2 border-gray-700 overflow-hidden">
+              {stream ? (
+                <video
+                  ref={videoRef}
+                  autoPlay
+                  playsInline
+                  muted
+                  className="w-full h-full object-cover"
+                />
+              ) : (
+                <div className="w-full h-full flex items-center justify-center">
+                  <div className="text-center">
+                    <div className="w-16 h-16 bg-gray-600 rounded-full flex items-center justify-center mx-auto mb-4">
+                      <svg className="w-8 h-8 text-gray-400" fill="currentColor" viewBox="0 0 20 20">
+                        <path d="M2 6a2 2 0 012-2h6a2 2 0 012 2v8a2 2 0 01-2 2H4a2 2 0 01-2-2V6zM14.553 7.106A1 1 0 0014 8v4a1 1 0 00.553.894l2 1A1 1 0 0018 13V7a1 1 0 00-1.447-.894l-2 1z"/>
+                      </svg>
+                    </div>
+                    <p className="text-gray-400">
+                      {webcamError ? 'Webcam Error' : 'Click Start to begin'}
+                    </p>
+                    {webcamError && (
+                      <p className="text-red-400 text-sm mt-2">{webcamError}</p>
+                    )}
+                  </div>
                 </div>
-                <p className="text-gray-400">Webcam Feed</p>
-              </div>
+              )}
             </div>
           ) : (
             <div className="w-96 h-64 bg-gray-900 rounded-lg border-2 border-gray-700 flex items-center justify-center">
@@ -65,7 +147,7 @@ function App() {
           
           {/* Privacy Toggle */}
           <button
-            onClick={() => setShowVideo(!showVideo)}
+            onClick={toggleVideo}
             className="absolute top-4 right-4 bg-gray-700 hover:bg-gray-600 rounded-full p-2 transition-colors"
             title="Toggle video preview"
           >
