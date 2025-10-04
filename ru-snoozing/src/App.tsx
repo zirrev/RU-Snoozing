@@ -1,69 +1,116 @@
 import React, { useState, useRef, useEffect } from 'react';
 import './App.css';
+import { beep } from './beep';
+import { useFaceAwake } from './useFaceAwake';
 
 function App() {
   const [focusDuration, setFocusDuration] = useState(1.5); // hours
   const [showVideo, setShowVideo] = useState(true);
   const [isRunning, setIsRunning] = useState(false);
   const [progress, setProgress] = useState(0);
+
+  // Webcam state
   const [stream, setStream] = useState<MediaStream | null>(null);
   const [webcamError, setWebcamError] = useState<string | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
-  const progressIntervalRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Timer interval (browser type)
+  const progressIntervalRef = useRef<number | null>(null);
+
+  // Face drowsiness (EAR) detection
+  const face = useFaceAwake({
+    videoRef,
+    earThreshold: 0.18,      // tune: 0.16–0.22
+    dwellMs: 600,            // ms eyes must stay closed
+    onDrowsy: () => beep(600, 880),
+  });
 
   // Webcam functions
-  const startWebcam = async () => {
-    try {
-      setWebcamError(null);
-      const mediaStream = await navigator.mediaDevices.getUserMedia({ 
-        video: { 
-          width: { ideal: 640 },
-          height: { ideal: 480 }
-        }, 
-        audio: false 
-      });
-      setStream(mediaStream);
-      if (videoRef.current) {
-        videoRef.current.srcObject = mediaStream;
-      }
-    } catch (error) {
-      console.error('Error accessing webcam:', error);
-      setWebcamError('Unable to access webcam. Please check permissions.');
-    }
-  };
-
   const stopWebcam = () => {
     if (stream) {
-      stream.getTracks().forEach(track => track.stop());
+      stream.getTracks().forEach((track) => track.stop());
       setStream(null);
     }
     if (videoRef.current) {
-      videoRef.current.srcObject = null;
+      (videoRef.current as HTMLVideoElement).srcObject = null;
     }
   };
 
-  // Cleanup webcam on unmount
+  const startWebcam = async () => {
+    try {
+      // Stop existing stream before starting new one
+      stopWebcam();
+      setWebcamError(null);
+      const mediaStream = await navigator.mediaDevices.getUserMedia({
+        video: { width: { ideal: 640 }, height: { ideal: 480 } },
+        audio: false,
+      });
+      setStream(mediaStream);
+
+      // Delay to ensure video element is ready
+      setTimeout(() => {
+        if (videoRef.current) {
+          try {
+            videoRef.current.srcObject = mediaStream;
+            console.log('Webcam stream attached successfully.');
+          } catch (error) {
+            console.error('Failed to attach webcam stream, retrying...', error);
+            setTimeout(() => {
+              if (videoRef.current) {
+                try {
+                  videoRef.current.srcObject = mediaStream;
+                  console.log('Webcam stream attached on retry.');
+                } catch (retryError) {
+                  console.error('Retry failed to attach webcam stream:', retryError);
+                  setWebcamError('Unable to access webcam. Please check permissions.');
+                }
+              }
+            }, 300);
+          }
+        } else {
+          console.error('Video ref is not available.');
+          setWebcamError('Unable to access webcam. Please check permissions.');
+        }
+      }, 150);
+    } catch (error) {
+      console.error('Error accessing webcam:', error);
+      setWebcamError('Unable to access webcam. Please check permissions.');
+      throw error;
+    }
+  };
+
+  // Cleanup on unmount
   useEffect(() => {
     return () => {
       stopWebcam();
       if (progressIntervalRef.current) {
-        clearInterval(progressIntervalRef.current);
+        window.clearInterval(progressIntervalRef.current);
       }
+      face.stop();
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const handleStart = async () => {
     setIsRunning(true);
-    await startWebcam();
-    
-    // Start progress simulation
-    progressIntervalRef.current = setInterval(() => {
-      setProgress(prev => {
+    try {
+      await startWebcam();
+    } catch (error) {
+      setIsRunning(false);
+      return;
+    }
+
+    // Start face analysis once video is ready
+    face.start();
+
+    // Simple progress simulation (0→100)
+    if (progressIntervalRef.current) window.clearInterval(progressIntervalRef.current);
+    progressIntervalRef.current = window.setInterval(() => {
+      setProgress((prev) => {
         if (prev >= 100) {
-          if (progressIntervalRef.current) {
-            clearInterval(progressIntervalRef.current);
-          }
+          if (progressIntervalRef.current) window.clearInterval(progressIntervalRef.current);
           setIsRunning(false);
+          face.stop();
           stopWebcam();
           return 0;
         }
@@ -75,44 +122,45 @@ function App() {
   const handleStop = () => {
     setIsRunning(false);
     setProgress(0);
+    face.stop();
     stopWebcam();
     if (progressIntervalRef.current) {
-      clearInterval(progressIntervalRef.current);
+      window.clearInterval(progressIntervalRef.current);
+      progressIntervalRef.current = null;
     }
   };
 
   const toggleVideo = () => {
     setShowVideo(!showVideo);
     if (!showVideo && isRunning) {
-      // If turning video back on and session is running, restart webcam
       startWebcam();
+      face.start();
     } else if (showVideo && isRunning) {
-      // If turning video off and session is running, stop webcam
+      face.stop();
       stopWebcam();
     }
   };
 
   return (
     <div className="min-h-screen bg-dark-bg text-soft-white font-sans">
-      {/* Header Section */}
+      {/* Header */}
       <header className="pt-8 pb-6">
         <div className="flex flex-col items-center space-y-4">
-          <img 
-            src="/logo.svg" 
-            alt="RU Snoozing Logo" 
-            className="w-16 h-16"
-          />
+          <img src="/logo.svg" alt="RU Snoozing Logo" className="w-16 h-16" />
           <h1 className="text-3xl font-bold text-center">RU Snoozing</h1>
           <p className="text-lg text-gray-400 text-center">Stay awake. Stay focused.</p>
         </div>
       </header>
 
-      {/* Main Content */}
+      {/* Main */}
       <main className="flex flex-col items-center px-6 max-w-4xl mx-auto">
         {/* Video Section */}
-        <div className="relative mb-8">
+        <div className="relative mb-2">
           {showVideo ? (
-            <div className="w-96 h-64 bg-gray-800 rounded-lg border-2 border-gray-700 overflow-hidden">
+            <div
+              className={`w-96 h-64 rounded-lg border-2 overflow-hidden transition-all
+              ${face.drowsy ? 'border-red-500 ring-2 ring-red-500' : 'border-gray-700'}`}
+            >
               {stream ? (
                 <video
                   ref={videoRef}
@@ -132,9 +180,7 @@ function App() {
                     <p className="text-gray-400">
                       {webcamError ? 'Webcam Error' : 'Click Start to begin'}
                     </p>
-                    {webcamError && (
-                      <p className="text-red-400 text-sm mt-2">{webcamError}</p>
-                    )}
+                    {webcamError && <p className="text-red-400 text-sm mt-2">{webcamError}</p>}
                   </div>
                 </div>
               )}
@@ -144,7 +190,7 @@ function App() {
               <p className="text-gray-500">Video Hidden</p>
             </div>
           )}
-          
+
           {/* Privacy Toggle */}
           <button
             onClick={toggleVideo}
@@ -164,8 +210,16 @@ function App() {
           </button>
         </div>
 
-        {/* Control Buttons */}
-        <div className="flex space-x-6 mb-8">
+        {/* Awake/Drowsy status */}
+        <div className="mb-6 text-sm text-gray-300 flex items-center gap-4">
+          <span>
+            Face: {face.ready ? (face.analyzing ? (face.drowsy ? 'DROWSY 😴' : 'Awake 😎') : 'ready') : 'loading...'}
+          </span>
+          <span className="text-gray-400">EAR: {face.ear.toFixed(3)}</span>
+        </div>
+
+        {/* Controls Row */}
+        <div className="flex items-center gap-6 mb-8">
           <button
             onClick={handleStart}
             disabled={isRunning}
@@ -174,7 +228,7 @@ function App() {
             <div className="w-3 h-3 bg-white rounded-full"></div>
             <span>Start</span>
           </button>
-          
+
           <button
             onClick={handleStop}
             disabled={!isRunning}
@@ -182,6 +236,15 @@ function App() {
           >
             <div className="w-3 h-3 bg-white rounded-full"></div>
             <span>Stop</span>
+          </button>
+
+          {/* Test beep */}
+          <button
+            onClick={() => beep(500, 880)}
+            className="px-3 py-2 bg-gray-700 hover:bg-gray-600 rounded text-sm"
+            title="Play a short test beep"
+          >
+            Test Beep
           </button>
         </div>
 
@@ -220,10 +283,10 @@ function App() {
               <span className="text-sm text-gray-400">{progress}%</span>
             </div>
             <div className="w-full bg-gray-700 rounded-full h-3">
-              <div 
+              <div
                 className="bg-green-500 h-3 rounded-full transition-all duration-300"
                 style={{ width: `${progress}%` }}
-              ></div>
+              />
             </div>
           </div>
         </div>
