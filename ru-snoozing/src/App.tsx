@@ -96,11 +96,12 @@ function App() {
     <div className="min-h-screen bg-dark-bg text-soft-white font-sans">
       {/* Header Section */}
       <header className="pt-8 pb-6">
-        <div className="flex flex-col items-center space-y-4">
+        <div className="flex flex-col items-center space-y-2">
           <img 
             src="/logo.svg" 
-            alt="RU Snoozing Logo" 
-            className="w-16 h-16"
+            alt="RU Snoozing Logo"
+             style={{ width: "140px", height: "110px" }}
+            className="mb-1"
           />
           <h1 className="text-3xl font-bold text-center">RU Snoozing</h1>
           <p className="text-lg text-gray-400 text-center">Stay awake. Stay focused.</p>
