@@ -21,9 +21,55 @@ function App() {
   const sessionStartRef = useRef<number>(0);
   const sessionMsRef = useRef<number>(0);
 
+  // Beep counter for triggering TTS
+  const beepCountRef = useRef<number>(0);
+  const lastTTSTimeRef = useRef<number>(0); // Prevent TTS spam
+
   // Keep simple booleans in refs for effects/beeps
   const isRunningRef = useRef(isRunning);
   useEffect(() => { isRunningRef.current = isRunning; }, [isRunning]);
+
+  // Store input text in ref so callbacks can access it
+  const inputTextRef = useRef(inputText);
+  useEffect(() => { inputTextRef.current = inputText; }, [inputText]);
+
+  // Function to send text to Gemini backend (triggers TTS)
+  const sendToGemini = async () => {
+    const now = Date.now();
+    // Prevent TTS from firing more than once every 30 seconds
+    if (now - lastTTSTimeRef.current < 30000) {
+      console.log("🚫 TTS on cooldown, skipping...");
+      return;
+    }
+    lastTTSTimeRef.current = now;
+
+    try {
+      console.log("🎙️ Sending to Gemini for TTS...");
+      const textToSend = inputTextRef.current.trim() || "motivation"; // fallback
+      const res = await fetch("http://localhost:5001/gemini", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: textToSend }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      console.log("✅ Gemini response:", data.response);
+    } catch (err: any) {
+      console.error("❌ Gemini backend error:", err.message);
+    }
+  };
+
+  // Increment beep counter and trigger TTS on 3rd beep
+  const handleBeepEvent = () => {
+    beepCountRef.current += 1;
+    console.log(`🔔 Beep event #${beepCountRef.current}`);
+    
+    if (beepCountRef.current >= 3) {
+      console.log("🎯 3 beeps reached! Triggering TTS...");
+      beepCountRef.current = 0; // Reset counter
+      sendToGemini();
+    }
+  };
 
   // Face detection — eyes closed + head down
   const face = useFaceAwake({
@@ -34,8 +80,18 @@ function App() {
     headDownOffDeg: 12,
     headDwellMs: 5000,
     emaAlpha: 0.15,
-    onEyeDrowsy: () => { if (isRunningRef.current) beep(500, 1000); },
-    onHeadDown: () => { if (isRunningRef.current) beep(500, 800); },
+    onEyeDrowsy: () => { 
+      if (isRunningRef.current) {
+        beep(500, 1000);
+        handleBeepEvent();
+      }
+    },
+    onHeadDown: () => { 
+      if (isRunningRef.current) {
+        beep(500, 800);
+        handleBeepEvent();
+      }
+    },
   });
 
   // Facial motion idle detector (no keyboard/mouse needed)
@@ -62,8 +118,12 @@ function App() {
       if (!idleBeepIntervalRef.current) {
         // immediate beep, then every 3s while still idle
         beep(250, 900);
+        handleBeepEvent(); // Count idle beeps too
         idleBeepIntervalRef.current = window.setInterval(() => {
-          if (isRunningRef.current && idleRef.current) beep(250, 900);
+          if (isRunningRef.current && idleRef.current) {
+            beep(250, 900);
+            handleBeepEvent();
+          }
         }, 3000);
       }
     } else {
@@ -71,23 +131,8 @@ function App() {
     }
 
     return () => { /* interval cleared in next run/stop */ };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [faceActivity.idle]);
-
-  // --- Gemini: send input to backend when session starts (optional) ---
-  const sendToGemini = async () => {
-    try {
-      const res = await fetch("http://localhost:5001/gemini", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: inputText }),
-      });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json();
-      alert(`Gemini says: ${data.response}`);
-    } catch (err: any) {
-      alert(err.message || "Could not reach the Gemini backend.");
-    }
-  };
 
   // Webcam functions (reliable init & attach)
   const startWebcam = async () => {
@@ -219,20 +264,18 @@ function App() {
   };
 
   const handleStart = async () => {
+    beepCountRef.current = 0; // Reset beep counter on start
+    lastTTSTimeRef.current = 0; // Reset TTS cooldown
     setIsRunning(true);
     await startWebcam();
     await face.start();   // start landmark analysis after video is live
     startTiming();
-
-    // Send the user's input text to Gemini when session starts
-    if (inputText.trim().length > 0) {
-      await sendToGemini();
-    }
   };
 
   const handleStop = () => {
     setIsRunning(false);
     setProgress(0);
+    beepCountRef.current = 0; // Reset counter
     face.stop();
     stopWebcam();
 
@@ -416,8 +459,6 @@ function App() {
               }}
             />
             <div className="flex justify-between text-sm text-gray-400">
-              <span>0.1h</span>
-              <span>3h</span>
             </div>
           </div>
         )}

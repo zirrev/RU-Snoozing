@@ -5,26 +5,25 @@ import google.generativeai as genai
 import os
 import subprocess
 import shutil
+import sys
 
-# 1️⃣ Load environment variables
+# Load environment variables
 load_dotenv()
 
-# 2️⃣ Configure Gemini API
+# Configure Gemini API
 genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
 
-# 3️⃣ Initialize Flask
+# Initialize Flask
 app = Flask(__name__)
-CORS(app)  # allow requests from frontend
+CORS(app)
 
-# 4️⃣ Storage for latest interaction
+# Storage for latest interaction
 latest_interaction = {"text": None, "response": None}
 
-# 5️⃣ Test route
 @app.route("/")
 def home():
     return "Flask backend is running ✅"
 
-# 6️⃣ Gemini route — handles text input from frontend
 @app.route("/gemini", methods=["POST"])
 def gemini_response():
     data = request.get_json()
@@ -34,7 +33,7 @@ def gemini_response():
         return jsonify({"error": "No text provided"}), 400
 
     try:
-        print(f"\n🟢 New Input Received: {user_text}\n")
+        print(f"\n🟢 New Input Received: {user_text}\n", flush=True)
 
         # Prompt for Gemini
         prompt = f"""
@@ -54,79 +53,102 @@ The output should ultimately be motivational and to keep the user awake.
         response = model.generate_content(prompt)
         gemini_output = response.text.strip()
 
-        # Resolve path to ru-snoozing/src/tts.js (server.py is in backend/)
-        base_dir = os.path.dirname(os.path.dirname(__file__))  # go up from backend/ → ru-snoozing/
+        print(f"💬 Gemini Response: {gemini_output}\n", flush=True)
+
+        # Resolve path to tts.js
+        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         tts_path = os.path.join(base_dir, "src", "tts.js")
 
-        print("Resolved TTS path:", tts_path)
-        print("TTS path exists?", os.path.exists(tts_path))
+        print(f"📂 Base directory: {base_dir}", flush=True)
+        print(f"📂 TTS path: {tts_path}", flush=True)
+        print(f"📂 TTS exists: {os.path.exists(tts_path)}", flush=True)
 
         if not os.path.exists(tts_path):
-            err_msg = "tts.js not found at expected location. Check path."
-            print(err_msg)
-            return jsonify({"error": err_msg}), 500
+            return jsonify({"error": f"tts.js not found at: {tts_path}"}), 500
 
         # Find node executable
         node_exec = shutil.which("node")
-        # fallback common mac/linux locations
         if not node_exec:
-            for candidate in ("/usr/local/bin/node", "/usr/bin/node", "/opt/homebrew/bin/node"):
+            # Try common paths
+            for candidate in ["/usr/local/bin/node", "/usr/bin/node", "/opt/homebrew/bin/node"]:
                 if os.path.exists(candidate):
                     node_exec = candidate
                     break
 
-        print("Resolved node executable:", node_exec)
+        print(f"🔧 Node executable: {node_exec}", flush=True)
+        
         if not node_exec:
-            err_msg = "Node.js executable not found. Make sure 'node' is installed and available to the Flask process."
-            print(err_msg)
-            return jsonify({"error": err_msg}), 500
+            return jsonify({"error": "Node.js not found. Install Node.js."}), 500
 
-        # --- Run Node script and capture stdout/stderr so you can see console.log() from tts.js ---
+        # Run Node script
+        print(f"🎬 Starting TTS generation...", flush=True)
+        
+        # Pass environment variables to Node process
+        env = os.environ.copy()
+        env['ELEVENLABS_API_KEY'] = os.getenv('ELEVENLABS_API_KEY', '')
+        
         try:
-            # use run to wait and capture output for debugging
             result = subprocess.run(
                 [node_exec, tts_path, gemini_output],
                 capture_output=True,
                 text=True,
-                timeout=60  # seconds; adjust if needed
+                timeout=60,
+                cwd=base_dir,  # Set working directory for output.mp3
+                env=env  # Pass environment variables
             )
-            print("----- node stdout -----")
-            print(result.stdout)
-            print("----- node stderr -----")
-            print(result.stderr)
-            print("----- node exit code -----")
-            print(result.returncode)
+            
+            print("=" * 50, flush=True)
+            print("📤 NODE STDOUT:", flush=True)
+            print(result.stdout, flush=True)
+            print("=" * 50, flush=True)
+            print("📤 NODE STDERR:", flush=True)
+            print(result.stderr, flush=True)
+            print("=" * 50, flush=True)
+            print(f"📤 NODE EXIT CODE: {result.returncode}", flush=True)
+            print("=" * 50, flush=True)
+            
             if result.returncode != 0:
-                print("Node script exited non-zero. Check stderr above.")
-        except subprocess.TimeoutExpired as te:
-            print("Node process timed out:", te)
+                print("⚠️ Node script exited with error", flush=True)
+                return jsonify({
+                    "error": "TTS generation failed",
+                    "details": result.stderr
+                }), 500
+
+        except subprocess.TimeoutExpired:
+            print("⏱️ Node process timed out", flush=True)
+            return jsonify({"error": "TTS generation timed out"}), 500
         except Exception as e:
-            print("Error running node:", e)
+            print(f"❌ Error running node: {e}", flush=True)
+            return jsonify({"error": f"Failed to run TTS: {str(e)}"}), 500
 
         # Save latest interaction
         latest_interaction["text"] = user_text
         latest_interaction["response"] = gemini_output
 
-        print(f"💬 Gemini Response: {gemini_output}\n")
+        print(f"✅ Request completed successfully\n", flush=True)
 
         return jsonify({
             "message": "✅ Received text successfully!",
             "input": user_text,
-            "response": gemini_output
+            "response": gemini_output,
+            "tts_status": "completed"
         })
 
     except Exception as e:
-        print("❌ Error:", e)
+        print(f"❌ Error in gemini_response: {e}", flush=True)
+        import traceback
+        traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
 
-# 7️⃣ Retrieve last stored response
 @app.route("/latest", methods=["GET"])
 def get_latest():
     if not latest_interaction["response"]:
         return jsonify({"message": "No previous interaction yet."}), 404
     return jsonify(latest_interaction)
 
-# 8️⃣ Run the server
 if __name__ == "__main__":
+    print("🚀 Starting Flask server...", flush=True)
+    print(f"📂 Current directory: {os.getcwd()}", flush=True)
+    print(f"📂 Script directory: {os.path.dirname(os.path.abspath(__file__))}", flush=True)
     app.run(host="0.0.0.0", port=5001, debug=True)
