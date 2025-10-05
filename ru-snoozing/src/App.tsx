@@ -267,14 +267,19 @@ function App() {
             <div className="flex justify-between items-center">
               <label className="text-lg font-medium">Focus Duration</label>
               <span className="text-xl font-bold text-green-400">
-                {focusDuration.toFixed(1)}h
+                {(() => {
+                  const totalMinutes = Math.round(focusDuration * 60); // convert to total minutes
+                  const hours = Math.floor(totalMinutes / 60);
+                  const minutes = totalMinutes % 60;
+                  return `${hours}h ${minutes}m`;
+                })()}
               </span>
             </div>
             <input
               type="range"
-              min="0.1"
+              min="0.0833"
               max="3"
-              step="0.1"
+              step="0.0833"
               value={focusDuration}
               onChange={(e) => setFocusDuration(parseFloat(e.target.value))}
               className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer slider"
