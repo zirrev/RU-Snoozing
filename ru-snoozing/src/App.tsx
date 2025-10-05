@@ -8,6 +8,7 @@ function App() {
   const [showVideo, setShowVideo] = useState(true);
   const [isRunning, setIsRunning] = useState(false);
   const [progress, setProgress] = useState(0);
+  const [inputText, setInputText] = useState(''); // Text input string
 
   // Webcam state
   const [stream, setStream] = useState<MediaStream | null>(null);
@@ -260,41 +261,60 @@ function App() {
           )}
         </div>
 
-        {/* Focus Control Section */}
-        <div className="w-full max-w-md space-y-6">
-          {/* Focus Duration Slider */}
-          <div className="space-y-3">
-            <div className="flex justify-between items-center">
-              <label className="text-lg font-medium">Focus Duration</label>
-              <span className="text-xl font-bold text-green-400">
-                {(() => {
-                  const totalMinutes = Math.round(focusDuration * 60); // convert to total minutes
-                  const hours = Math.floor(totalMinutes / 60);
-                  const minutes = totalMinutes % 60;
-                  return `${hours}h ${minutes}m`;
-                })()}
-              </span>
-            </div>
-            <input
-              type="range"
-              min="0.0833"
-              max="3"
-              step="0.0833"
-              value={focusDuration}
-              onChange={(e) => setFocusDuration(parseFloat(e.target.value))}
-              className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer slider"
-              style={{
-                background: `linear-gradient(to right, #10B981 0%, #10B981 ${(focusDuration / 3) * 100}%, #374151 ${(focusDuration / 3) * 100}%, #374151 100%)`
-              }}
-            />
-            <div className="flex justify-between text-sm text-gray-400">
-              <span>0.1h</span>
-              <span>3h</span>
+        {/* Text Input Box - Only show before session starts */}
+        {!isRunning && (
+          <div className="w-full max-w-md mb-6">
+            <div className="space-y-2">
+              <textarea
+                value={inputText}
+                onChange={(e) => setInputText(e.target.value)}
+                placeholder="How do you want to be woken up?"
+                className="w-full px-4 py-3 bg-gray-800 border border-gray-600 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent resize-none"
+                rows={3}
+              />
             </div>
           </div>
+        )}
 
-          {/* Progress Bar */}
-          <div className="space-y-2">
+        {/* Focus Control Section */}
+        <div className="w-full max-w-md space-y-6">
+          {/* Focus Duration Slider - Only show before session starts */}
+          {!isRunning && (
+            <div className="space-y-3">
+              <div className="flex justify-between items-center">
+                <label className="text-lg font-medium">Focus Duration</label>
+                <span className="text-xl font-bold text-green-400">
+                  {(() => {
+                    const totalMinutes = Math.round(focusDuration * 60); // convert to total minutes
+                    const hours = Math.floor(totalMinutes / 60);
+                    const minutes = totalMinutes % 60;
+                    return `${hours}h ${minutes}m`;
+                  })()}
+                </span>
+              </div>
+              <input
+                type="range"
+                min="0.0833"
+                max="3"
+                step="0.0833"
+                value={focusDuration}
+                onChange={(e) => setFocusDuration(parseFloat(e.target.value))}
+                className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer slider"
+                style={{
+                  background: `linear-gradient(to right, #10B981 0%, #10B981 ${(focusDuration / 3) * 100}%, #374151 ${(focusDuration / 3) * 100}%, #374151 100%)`
+                }}
+              />
+              <div className="flex justify-between text-sm text-gray-400">
+                <span>0.1h</span>
+                <span>3h</span>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Progress Bar - Show under controls when session is running */}
+        {isRunning && (
+          <div className="w-full max-w-md space-y-2">
             <div className="flex justify-between items-center">
               <span className="text-sm font-medium">Session Progress</span>
               <span className="text-sm text-gray-400">{Math.round(progress)}%</span>
@@ -306,6 +326,52 @@ function App() {
               />
             </div>
           </div>
+        )}
+
+        {/* Text Input Box - Only show before session starts */}
+        {!isRunning && (
+          <div className="w-full max-w-md mb-6">
+            <div className="space-y-2">
+              <textarea
+                value={inputText}
+                onChange={(e) => setInputText(e.target.value)}
+                placeholder="How do you want to be woken up?"
+                className="w-full px-4 py-3 bg-gray-800 border border-gray-600 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent resize-none"
+                rows={3}
+              />
+            </div>
+          </div>
+        )}
+
+        {/* Focus Control Section */}
+        <div className="w-full max-w-md space-y-6">
+          {/* Focus Duration Slider - Only show before session starts */}
+          {!isRunning && (
+            <div className="space-y-3">
+              <div className="flex justify-between items-center">
+                <label className="text-lg font-medium">Focus Duration</label>
+                <span className="text-xl font-bold text-green-400">
+                  {focusDuration.toFixed(1)}h
+                </span>
+              </div>
+              <input
+                type="range"
+                min="0.1"
+                max="3"
+                step="0.1"
+                value={focusDuration}
+                onChange={(e) => setFocusDuration(parseFloat(e.target.value))}
+                className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer slider"
+                style={{
+                  background: `linear-gradient(to right, #10B981 0%, #10B981 ${(focusDuration / 3) * 100}%, #374151 ${(focusDuration / 3) * 100}%, #374151 100%)`
+                }}
+              />
+              <div className="flex justify-between text-sm text-gray-400">
+                <span>0.1h</span>
+                <span>3h</span>
+              </div>
+            </div>
+          )}
         </div>
       </main>
     </div>
