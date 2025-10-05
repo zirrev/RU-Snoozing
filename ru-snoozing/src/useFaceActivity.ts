@@ -11,6 +11,8 @@ export type FaceActivityOpts = {
   pollMs?: number;     // how often to check for changes
 };
 
+//ok
+
 export function useFaceActivity(
   ear: number,
   pitchDeg: number,
