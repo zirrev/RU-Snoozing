@@ -2,35 +2,78 @@ import React, { useState, useRef, useEffect } from 'react';
 import './App.css';
 import { beep } from './beep';
 import { useFaceAwake } from './useFaceAwake';
+import { useFaceActivity } from './useFaceActivity';
 
 function App() {
-  const [focusDuration, setFocusDuration] = useState(1.5); // hours (slider controls this)
+  const [focusDuration, setFocusDuration] = useState(1.5); // hours
   const [showVideo, setShowVideo] = useState(true);
   const [isRunning, setIsRunning] = useState(false);
   const [progress, setProgress] = useState(0);
-  const [inputText, setInputText] = useState(''); // Text input string
+  const [inputText, setInputText] = useState(''); // Text input for Gemini
 
   // Webcam state
   const [stream, setStream] = useState<MediaStream | null>(null);
   const [webcamError, setWebcamError] = useState<string | null>(null);
-  const videoRef = useRef<HTMLVideoElement>(null);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
 
-  // Timer interval
+  // Timer refs
   const progressIntervalRef = useRef<number | null>(null);
   const sessionStartRef = useRef<number>(0);
   const sessionMsRef = useRef<number>(0);
 
-  // Face detection: eyes closed (0.6s) AND head down (5s)
+  // Keep simple booleans in refs for effects/beeps
+  const isRunningRef = useRef(isRunning);
+  useEffect(() => { isRunningRef.current = isRunning; }, [isRunning]);
+
+  // Face detection — eyes closed + head down
   const face = useFaceAwake({
     videoRef,
     earThreshold: 0.18,
     eyeDwellMs: 600,
-    headDownPitchDeg: 15,  // tune 12–20
-    headDwellMs: 5000,     // 5s
-    onEyeDrowsy: () => beep(500, 1000),
-    onHeadDown: () => beep(500, 800),
+    headDownOnDeg: 15,
+    headDownOffDeg: 12,
+    headDwellMs: 5000,
+    emaAlpha: 0.15,
+    onEyeDrowsy: () => { if (isRunningRef.current) beep(500, 1000); },
+    onHeadDown: () => { if (isRunningRef.current) beep(500, 800); },
   });
 
+  // Facial motion idle detector (no keyboard/mouse needed)
+  const faceActivity = useFaceActivity(face.ear, face.pitchDeg, { idleMs: 10000 });
+  const idleRef = useRef(faceActivity.idle);
+  useEffect(() => { idleRef.current = faceActivity.idle; }, [faceActivity.idle]);
+
+  // Idle beeping (repeat while idle)
+  const idleBeepIntervalRef = useRef<number | null>(null);
+  useEffect(() => {
+    const stopIdleBeep = () => {
+      if (idleBeepIntervalRef.current) {
+        window.clearInterval(idleBeepIntervalRef.current);
+        idleBeepIntervalRef.current = null;
+      }
+    };
+
+    if (!isRunningRef.current) {
+      stopIdleBeep();
+      return;
+    }
+
+    if (faceActivity.idle) {
+      if (!idleBeepIntervalRef.current) {
+        // immediate beep, then every 3s while still idle
+        beep(250, 900);
+        idleBeepIntervalRef.current = window.setInterval(() => {
+          if (isRunningRef.current && idleRef.current) beep(250, 900);
+        }, 3000);
+      }
+    } else {
+      stopIdleBeep();
+    }
+
+    return () => { /* interval cleared in next run/stop */ };
+  }, [faceActivity.idle]);
+
+  // --- Gemini: send input to backend when session starts (optional) ---
   const sendToGemini = async () => {
     try {
       const res = await fetch("http://localhost:5001/gemini", {
@@ -73,6 +116,7 @@ function App() {
     } catch (error: any) {
       console.error('Error accessing webcam:', error);
       setWebcamError('Unable to access webcam. Please check permissions.');
+      throw error;
     }
   };
 
@@ -85,16 +129,29 @@ function App() {
     if (v) (v as any).srcObject = null;
   };
 
+  // Attach stream to <video>
+  useEffect(() => {
+    const v = videoRef.current;
+    if (!v || !stream) return;
+    (v as any).srcObject = stream;
+    v.play?.().catch(() => {});
+  }, [stream]);
+
+  // Full cleanup on unmount
   useEffect(() => {
     return () => {
-      stopWebcam();
-      if (progressIntervalRef.current) {
-        window.clearInterval(progressIntervalRef.current);
+      if (progressIntervalRef.current) window.clearInterval(progressIntervalRef.current);
+      if (idleBeepIntervalRef.current) {
+        window.clearInterval(idleBeepIntervalRef.current);
+        idleBeepIntervalRef.current = null;
       }
       face.stop();
+      stopWebcam();
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Timer progress
   const startTiming = () => {
     sessionMsRef.current = Math.max(0.1, focusDuration) * 60 * 60 * 1000;
     sessionStartRef.current = Date.now();
@@ -109,6 +166,10 @@ function App() {
         setIsRunning(false);
         face.stop();
         stopWebcam();
+        if (idleBeepIntervalRef.current) {
+          window.clearInterval(idleBeepIntervalRef.current);
+          idleBeepIntervalRef.current = null;
+        }
       }
     }, 250);
   };
@@ -116,10 +177,10 @@ function App() {
   const handleStart = async () => {
     setIsRunning(true);
     await startWebcam();
-    face.start();
+    await face.start();   // start landmark analysis after video is live
     startTiming();
 
-    // 👇 Send the user's input text to Gemini when session starts
+    // Send the user's input text to Gemini when session starts
     if (inputText.trim().length > 0) {
       await sendToGemini();
     }
@@ -130,29 +191,37 @@ function App() {
     setProgress(0);
     face.stop();
     stopWebcam();
+
     if (progressIntervalRef.current) {
       window.clearInterval(progressIntervalRef.current);
       progressIntervalRef.current = null;
     }
+    if (idleBeepIntervalRef.current) {
+      window.clearInterval(idleBeepIntervalRef.current);
+      idleBeepIntervalRef.current = null;
+    }
   };
 
-  const toggleVideo = () => {
-    setShowVideo(!showVideo);
-    if (!showVideo && isRunning) {
-      startWebcam();
-      face.start();
-    } else if (showVideo && isRunning) {
+  const toggleVideo = async () => {
+    const nextShow = !showVideo;
+    setShowVideo(nextShow);
+    if (nextShow && isRunning) {
+      await startWebcam();
+      await face.start();
+    } else if (!nextShow && isRunning) {
       face.stop();
       stopWebcam();
     }
   };
 
+  // Remaining time
   const remainingMs = Math.max(0, sessionMsRef.current - (Date.now() - sessionStartRef.current));
   const mm = Math.floor(remainingMs / 60000).toString().padStart(2, '0');
   const ss = Math.floor((remainingMs % 60000) / 1000).toString().padStart(2, '0');
 
   return (
     <div className="min-h-screen bg-dark-bg text-soft-white font-sans">
+      {/* Header */}
       <header className="pt-8 pb-6">
         <div className="flex flex-col items-center space-y-2">
           <img
@@ -167,12 +236,15 @@ function App() {
       </header>
 
       <main className="flex flex-col items-center px-6 max-w-4xl mx-auto">
-        {/* Video Section */}
+        {/* Video */}
         <div className="relative mb-2">
           {showVideo ? (
             <div
-              className={`w-96 h-64 rounded-lg border-2 overflow-hidden transition-all
-              ${(face.eyeDrowsy || face.headDown) ? 'border-red-500 ring-2 ring-red-500' : 'border-gray-700'}`}
+              className={`w-96 h-64 rounded-lg border-2 overflow-hidden transition-all ${
+                face.eyeDrowsy || face.headDown
+                  ? 'border-red-500 ring-2 ring-red-500'
+                  : 'border-gray-700'
+              }`}
             >
               {stream ? (
                 <video
@@ -185,15 +257,7 @@ function App() {
               ) : (
                 <div className="w-full h-full flex items-center justify-center">
                   <div className="text-center">
-                    <div className="w-16 h-16 bg-gray-600 rounded-full flex items-center justify-center mx-auto mb-4">
-                      <svg className="w-8 h-8 text-gray-400" fill="currentColor" viewBox="0 0 20 20">
-                        <path d="M2 6a2 2 0 012-2h6a2 2 0 012 2v8a2 2 0 01-2 2H4a2 2 0 01-2-2V6zM14.553 7.106A1 1 0 0014 8v4a1 1 0 00.553.894l2 1A1 1 0 0018 13V7a1 1 0 00-1.447-.894l-2 1z"/>
-                      </svg>
-                    </div>
-                    <p className="text-gray-400">
-                      {webcamError ? 'Webcam Error' : 'Click Start to begin'}
-                    </p>
-                    {webcamError && <p className="text-red-400 text-sm mt-2">{webcamError}</p>}
+                    <p className="text-gray-400">{webcamError || 'Click Start to begin'}</p>
                   </div>
                 </div>
               )}
@@ -212,24 +276,31 @@ function App() {
           >
             <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
               {showVideo ? (
-                <path fillRule="evenodd" d="M3.707 2.293a1 1 0 00-1.414 1.414l14 14a1 1 0 001.414-1.414l-1.473-1.473A10.014 10.014 0 0019.542 10C18.268 5.943 14.478 3 10 3a9.958 9.958 0 00-4.512 1.074l-1.78-1.781zm4.261 4.26l1.514 1.515a2.003 2.003 0 012.45 2.45l1.514 1.514a4 4 0 00-5.478-5.478z" />
+                <path
+                  fillRule="evenodd"
+                  d="M3.707 2.293a1 1 0 00-1.414 1.414l14 14a1 1 0 001.414-1.414l-1.473-1.473A10.014 10.014 0 0019.542 10C18.268 5.943 14.478 3 10 3a9.958 9.958 0 00-4.512 1.074l-1.78-1.781zm4.261 4.26l1.514 1.515a2.003 2.003 0 012.45 2.45l1.514 1.514a4 4 0 00-5.478-5.478z"
+                  clipRule="evenodd"
+                />
               ) : (
                 <>
                   <path d="M10 12a2 2 0 100-4 2 2 0 000 4z" />
-                  <path fillRule="evenodd" d="M.458 10C1.732 5.943 5.522 3 10 3s8.268 2.943 9.542 7c-1.274 4.057-5.064 7-9.542 7S1.732 14.057.458 10zM14 10a4 4 0 11-8 0 4 4 0 018 0z" />
+                  <path
+                    fillRule="evenodd"
+                    d="M.458 10C1.732 5.943 5.522 3 10 3s8.268 2.943 9.542 7c-1.274 4.057-5.064 7-9.542 7S1.732 14.057.458 10zM14 10a4 4 0 11-8 0 4 4 0 018 0z"
+                    clipRule="evenodd"
+                  />
                 </>
               )}
             </svg>
           </button>
         </div>
 
-        {/* Awake/Drowsy status */}
+        {/* Status */}
         <div className="mb-6 text-sm text-gray-300 flex items-center gap-4">
           <span>Eyes: {face.eyeDrowsy ? 'Closed (alert)' : 'Open'}</span>
           <span>Head: {face.headDown ? 'Down (alert)' : 'Level'}</span>
-          <span className="text-gray-400">
-            EAR: {face.ear.toFixed(3)} • Pitch: {face.pitchDeg.toFixed(1)}°
-          </span>
+          <span className="text-gray-400">EAR: {face.ear.toFixed(3)} • Pitch: {face.pitchDeg.toFixed(1)}°</span>
+          <span className="text-gray-500">Face motion: {faceActivity.idle ? 'idle' : 'active'}</span>
         </div>
 
         {/* Controls */}
@@ -237,37 +308,29 @@ function App() {
           <button
             onClick={handleStart}
             disabled={isRunning}
-            className="px-8 py-4 bg-green-600 hover:bg-green-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white font-semibold rounded-lg transition-colors duration-200 flex items-center space-x-2"
+            className="px-8 py-4 bg-green-600 hover:bg-green-700 disabled:bg-gray-600 text-white font-semibold rounded-lg transition-colors"
           >
-            <div className="w-3 h-3 bg-white rounded-full"></div>
-            <span>Start</span>
+            Start
           </button>
-
           <button
             onClick={handleStop}
             disabled={!isRunning}
-            className="px-8 py-4 bg-gray-600 hover:bg-gray-700 disabled:bg-gray-800 disabled:cursor-not-allowed text-white font-semibold rounded-lg border border-gray-500 transition-colors duration-200 flex items-center space-x-2"
+            className="px-8 py-4 bg-gray-600 hover:bg-gray-700 disabled:bg-gray-800 text-white font-semibold rounded-lg border border-gray-500 transition-colors"
           >
-            <div className="w-3 h-3 bg-white rounded-full"></div>
-            <span>Stop</span>
+            Stop
           </button>
 
           <button
             onClick={() => beep(100, 1000)}
             className="px-3 py-2 bg-gray-700 hover:bg-gray-600 rounded text-sm"
-            title="Play a short test beep"
           >
             Test Beep
           </button>
 
-          {isRunning && (
-            <div className="text-sm text-gray-400">
-              Remaining: {mm}:{ss}
-            </div>
-          )}
+          {isRunning && <div className="text-sm text-gray-400">Remaining: {mm}:{ss}</div>}
         </div>
 
-        {/* Text Input Box - only before session */}
+        {/* Text Input Box - only before session (Gemini prompt) */}
         {!isRunning && (
           <div className="w-full max-w-md mb-6">
             <div className="space-y-2">
@@ -305,7 +368,7 @@ function App() {
               onChange={(e) => setFocusDuration(parseFloat(e.target.value))}
               className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer slider"
               style={{
-                background: `linear-gradient(to right, #10B981 0%, #10B981 ${(focusDuration / 3) * 100}%, #374151 ${(focusDuration / 3) * 100}%, #374151 100%)`
+                background: `linear-gradient(to right, #10B981 0%, #10B981 ${(focusDuration / 3) * 100}%, #374151 ${(focusDuration / 3) * 100}%, #374151 100%)`,
               }}
             />
             <div className="flex justify-between text-sm text-gray-400">
@@ -315,7 +378,7 @@ function App() {
           </div>
         )}
 
-        {/* Progress Bar */}
+        {/* Progress Bar - only during session */}
         {isRunning && (
           <div className="w-full max-w-md space-y-2">
             <div className="flex justify-between items-center">
