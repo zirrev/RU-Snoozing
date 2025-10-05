@@ -81,11 +81,11 @@ function App() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ text: inputText }),
       });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
-      console.log("Gemini response:", data.response);
       alert(`Gemini says: ${data.response}`);
-    } catch (err) {
-      console.error("Error sending to Gemini:", err);
+    } catch (err: any) {
+      alert(err.message || "Could not reach the Gemini backend.");
     }
   };
 
@@ -93,26 +93,55 @@ function App() {
   const startWebcam = async () => {
     try {
       setWebcamError(null);
+      // If an old stream exists, stop it cleanly
       if (stream) {
         stream.getTracks().forEach(t => t.stop());
         setStream(null);
       }
+
+      // Request a fresh camera stream with stable constraints
       const mediaStream = await navigator.mediaDevices.getUserMedia({
-        video: { width: { ideal: 640 }, height: { ideal: 480 } },
+        video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } },
         audio: false,
       });
       setStream(mediaStream);
 
+      // Attach to the <video> element (the ref might not be ready immediately)
       const attach = () => {
         const v = videoRef.current;
         if (v) {
           (v as any).srcObject = mediaStream;
+          // Attempt to play; ignore the promise rejection if autoplay is blocked
           v.play?.().catch(() => {});
         } else {
           setTimeout(attach, 150);
         }
       };
       attach();
+
+      // Wait until the video has real frames (non-zero intrinsic size)
+      await new Promise<void>((resolve, reject) => {
+        let tries = 0;
+        const maxTries = 200; // ~5 seconds total (200 * 25ms)
+        const check = () => {
+          const v = videoRef.current;
+          if (
+            v &&
+            v.videoWidth > 0 &&
+            v.videoHeight > 0 &&
+            v.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA
+          ) {
+            resolve();
+            return;
+          }
+          if (tries++ >= maxTries) {
+            reject(new Error('Video not ready (dimensions are zero)'));
+            return;
+          }
+          setTimeout(check, 25);
+        };
+        check();
+      });
     } catch (error: any) {
       console.error('Error accessing webcam:', error);
       setWebcamError('Unable to access webcam. Please check permissions.');
@@ -129,7 +158,7 @@ function App() {
     if (v) (v as any).srcObject = null;
   };
 
-  // Attach stream to <video>
+  // Attach stream to <video> if it changes
   useEffect(() => {
     const v = videoRef.current;
     if (!v || !stream) return;
@@ -150,6 +179,21 @@ function App() {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Optional: pause/resume gracefully when tab goes hidden/visible
+  useEffect(() => {
+    const onVis = async () => {
+      if (document.hidden) {
+        face.stop();
+      } else if (isRunning) {
+        await startWebcam();
+        await face.start();
+      }
+    };
+    document.addEventListener('visibilitychange', onVis);
+    return () => document.removeEventListener('visibilitychange', onVis);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isRunning]);
 
   // Timer progress
   const startTiming = () => {

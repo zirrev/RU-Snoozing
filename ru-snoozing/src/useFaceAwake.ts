@@ -126,54 +126,82 @@ export function useFaceAwake({
   }, []);
 
   // main analysis loop
-  const analyze = useCallback(() => {
+// main analysis loop
+const analyze = useCallback(() => {
     const video = videoRef.current;
     const landmarker = landmarkerRef.current;
-    if (!video || !landmarker) return;
-
+  
+    if (!video || !landmarker) {
+      rafRef.current = requestAnimationFrame(analyze);
+      return;
+    }
+  
+    // HARD GUARDS: never call detect on zero/frozen/hidden frames
+    if (
+      video.videoWidth === 0 ||
+      video.videoHeight === 0 ||
+      video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA ||
+      document.hidden
+    ) {
+      rafRef.current = requestAnimationFrame(analyze);
+      return;
+    }
+  
     const t = performance.now();
-    const res = landmarker.detectForVideo(video, t);
+  
+    // Call Mediapipe safely; skip bad frames (ROI==0) instead of crashing
+    let res: any = null;
+    try {
+      res = landmarker.detectForVideo(video, t);
+    } catch (_e) {
+      // Rare ROI/frame issue — just skip this frame
+      rafRef.current = requestAnimationFrame(analyze);
+      return;
+    }
+  
     const lm = res?.faceLandmarks?.[0];
-
+  
     if (lm) {
       // ----- EAR
       const curEAR = computeEAR(lm);
       setEAR(prev => prev * 0.6 + curEAR * 0.4);
-
+  
       // ----- Pitch (matrix first, fallback to landmarks)
-      let curPitch = pitchDeg;
+      let curPitch: number;
       const matrices = (res as any).facialTransformationMatrixes as { data: Float32Array }[] | undefined;
       if (matrices && matrices[0]?.data?.length >= 16) {
         curPitch = pitchFromMatrix(Array.from(matrices[0].data));
       } else {
         curPitch = pitchFromLandmarks(lm);
       }
-
-      // Smooth pitch with EMA
+  
+      // Smooth pitch with EMA AND compute delta against baseline in the same tick
+      let deltaForThisFrame = 0;
       setPitchDeg(prev => {
         const smoothed = prev * (1 - emaAlpha) + curPitch * emaAlpha;
+  
         // calibration accumulation (first ~1s)
         if (!baselineReadyRef.current) {
           baselineSumRef.current += smoothed;
           baselineCountRef.current += 1;
-          // ~1s at ~30–60 fps
           if (baselineCountRef.current > 30) {
             baselinePitchRef.current = baselineSumRef.current / baselineCountRef.current;
             baselineReadyRef.current = true;
           }
         }
-        const delta = smoothed - baselinePitchRef.current;
-        setDeltaPitchDeg(delta);
+        deltaForThisFrame = smoothed - baselinePitchRef.current;
+        setDeltaPitchDeg(deltaForThisFrame);
         return smoothed;
       });
-
+  
       // ----- Eye-closure dwell
+      const now = t;
       if (curEAR < earThreshold) {
-        if (eyeBelowSinceRef.current == null) eyeBelowSinceRef.current = t;
-        if (t - (eyeBelowSinceRef.current ?? t) >= eyeDwellMs) {
-          if (t - lastEyeTriggerRef.current > eyeDwellMs) {
+        if (eyeBelowSinceRef.current == null) eyeBelowSinceRef.current = now;
+        if (now - (eyeBelowSinceRef.current ?? now) >= eyeDwellMs) {
+          if (now - lastEyeTriggerRef.current > eyeDwellMs) {
             setEyeDrowsy(true);
-            lastEyeTriggerRef.current = t;
+            lastEyeTriggerRef.current = now;
             onEyeDrowsy?.();
           }
         }
@@ -181,14 +209,13 @@ export function useFaceAwake({
         eyeBelowSinceRef.current = null;
         setEyeDrowsy(false);
       }
-
-      // ----- Head-down with hysteresis and dwell (use delta vs baseline)
+  
+      // ----- Head-down with hysteresis and dwell (use delta for THIS frame)
       const onThresh = headDownOnDeg;
       const offThresh = headDownOffDeg;
-      const delta = (pitchDeg - baselinePitchRef.current); // NOTE: pitchDeg state after smoothing (last frame)
-      const overOn = Math.abs(delta) >= onThresh;
-      const belowOff = Math.abs(delta) < offThresh;
-
+      const overOn = Math.abs(deltaForThisFrame) >= onThresh;
+      const belowOff = Math.abs(deltaForThisFrame) < offThresh;
+  
       if (headDown) {
         // currently ON -> check for OFF with hysteresis
         if (belowOff) {
@@ -198,11 +225,11 @@ export function useFaceAwake({
       } else {
         // currently OFF -> check for ON with dwell
         if (overOn) {
-          if (headDownSinceRef.current == null) headDownSinceRef.current = t;
-          if (t - (headDownSinceRef.current ?? t) >= headDwellMs) {
-            if (t - lastHeadTriggerRef.current > headDwellMs) {
+          if (headDownSinceRef.current == null) headDownSinceRef.current = now;
+          if (now - (headDownSinceRef.current ?? now) >= headDwellMs) {
+            if (now - lastHeadTriggerRef.current > headDwellMs) {
               setHeadDown(true);
-              lastHeadTriggerRef.current = t;
+              lastHeadTriggerRef.current = now;
               onHeadDown?.();
             }
           }
@@ -211,38 +238,50 @@ export function useFaceAwake({
         }
       }
     } else {
+      // no face this frame — clear eye dwell; keep headDown governed by hysteresis
+      eyeBelowSinceRef.current = null;
       setEyeDrowsy(false);
-      setHeadDown(false);
+      // don't force headDown=false here; hysteresis handles it when pitch normalizes
     }
-
+  
     rafRef.current = requestAnimationFrame(analyze);
   }, [
-    videoRef, earThreshold, eyeDwellMs,
-    headDownOnDeg, headDownOffDeg, headDwellMs,
-    onEyeDrowsy, onHeadDown, emaAlpha, headDown, pitchDeg
+    videoRef,
+    emaAlpha,
+    earThreshold,
+    eyeDwellMs,
+    headDownOnDeg,
+    headDownOffDeg,
+    headDwellMs,
+    onEyeDrowsy,
+    onHeadDown,
+    headDown
   ]);
-
+  
   const start = useCallback(async () => {
     // reset calibration
     baselineReadyRef.current = false;
     baselineSumRef.current = 0;
     baselineCountRef.current = 0;
-
+  
     await load();
     const video = videoRef.current;
     if (!video) return;
-
-    // wait for frames
-    if (video.readyState < 2) {
+  
+    // wait for data
+    if (video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) {
       await new Promise<void>((resolve) => {
-        const handler = () => {
-          video.removeEventListener('loadeddata', handler);
-          resolve();
-        };
+        const handler = () => { video.removeEventListener('loadeddata', handler); resolve(); };
         video.addEventListener('loadeddata', handler, { once: true });
       });
     }
-
+  
+    // ensure intrinsic dims are non-zero
+    let tries = 0;
+    while ((video.videoWidth === 0 || video.videoHeight === 0) && tries++ < 200) {
+      await new Promise(r => setTimeout(r, 25));
+    }
+  
     if (rafRef.current) cancelAnimationFrame(rafRef.current);
     setAnalyzing(true);
     rafRef.current = requestAnimationFrame(analyze);
