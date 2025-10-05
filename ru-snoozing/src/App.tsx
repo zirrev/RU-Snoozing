@@ -300,13 +300,55 @@ function App() {
   const mm = Math.floor(remainingMs / 60000).toString().padStart(2, '0');
   const ss = Math.floor((remainingMs % 60000) / 1000).toString().padStart(2, '0');
 
-  const bgClass = darkMode ? 'bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900' : 'bg-gradient-to-br from-blue-50 via-white to-indigo-50';
   const textClass = darkMode ? 'text-white' : 'text-gray-900';
   const cardBg = darkMode ? 'bg-slate-800/50 border-slate-700' : 'bg-white/80 border-gray-200';
   const inputBg = darkMode ? 'bg-slate-700 border-slate-600 text-white placeholder-gray-400' : 'bg-gray-50 border-gray-300 text-gray-900 placeholder-gray-500';
 
   return (
-    <div className={`min-h-screen ${bgClass} ${textClass} font-sans transition-all duration-300`}>
+    <div className="min-h-screen relative">
+      {/* Background Image Layer - Bottom layer (z-0) */}
+      <div 
+        className="fixed inset-0 z-0"
+        style={{
+          backgroundImage: `url('/background.png')`,
+          backgroundSize: 'cover',
+          backgroundPosition: 'center',
+          backgroundColor: darkMode ? '#0f172a' : '#f8fafc'
+        }}
+      />
+      
+      {/* Semi-transparent Overlay for Better Readability (z-1) */}
+      <div 
+        className={`fixed inset-0 z-[1] ${darkMode ? 'bg-slate-900/60' : 'bg-white/50'} backdrop-blur-sm`}
+      />
+
+      {/* Bamboo Decorations - Fixed to bottom corners (z-2) */}
+      <div className="fixed inset-0 z-[2] pointer-events-none overflow-hidden">
+        {/* Left bamboo */}
+        <img 
+          src="/bamboo-left.png" 
+          alt=""
+          className="absolute bottom-0 left-0 h-[500px] w-auto"
+          style={{ 
+            opacity: darkMode ? 0.4 : 0.5,
+            filter: darkMode ? 'brightness(0.9)' : 'brightness(1.1)'
+          }}
+        />
+        
+        {/* Right bamboo */}
+        <img 
+          src="/bamboo-right.png" 
+          alt=""
+          className="absolute bottom-0 right-0 h-[500px] w-auto"
+          style={{ 
+            opacity: darkMode ? 0.4 : 0.5,
+            filter: darkMode ? 'brightness(0.9)' : 'brightness(1.1)'
+          }}
+        />
+      </div>
+
+      {/* Content Layer - Top layer (z-10) */}
+      <div className={`relative z-10 min-h-screen ${textClass} font-sans`}>
       {/* Dark Mode Toggle */}
       <button
         onClick={() => setDarkMode(!darkMode)}
@@ -481,25 +523,30 @@ function App() {
             </button>
           </div>
 
-          {/* Progress Bar - during session */}
-          {isRunning && (
-            <div className={`w-full max-w-2xl p-6 rounded-xl ${cardBg} border backdrop-blur-sm`}>
-              <div className="flex justify-between items-center mb-3">
-                <span className="text-sm font-semibold">Session Progress</span>
-                <span className="text-sm font-mono">{Math.round(progress)}%</span>
-              </div>
-              <div className={`w-full ${darkMode ? 'bg-slate-700' : 'bg-gray-200'} rounded-full h-4 overflow-hidden`}>
-                <div
-                  className="bg-gradient-to-r from-green-500 to-emerald-500 h-4 rounded-full transition-all duration-300 shadow-lg"
-                  style={{ width: `${progress}%` }}
-                />
-              </div>
-            </div>
-          )}
+
         </div>
 
-        {/* Right Sidebar - Config */}
+        {/* Right Sidebar - Config or Progress */}
         <aside className="w-80 space-y-4">
+          {/* Vertical Progress Bar - during session */}
+          {isRunning && (
+            <div className={`p-6 rounded-xl ${cardBg} border backdrop-blur-sm h-[600px] flex flex-col items-center`}>
+            <div className="flex justify-between items-center mb-4 w-full">
+              <span className="text-sm font-semibold">Session Progress</span>
+              <span className="text-sm font-mono">{Math.round(progress)}%</span>
+            </div>
+          
+            {/* Make bar skinnier + centered */}
+            <div className={`flex-1 w-8 ${darkMode ? 'bg-slate-700' : 'bg-gray-200'} rounded-full overflow-hidden relative mx-auto`}>
+              <div
+                className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-green-500 to-emerald-500 rounded-full transition-all duration-300 shadow-lg"
+                style={{ height: `${progress}%` }}
+              />
+            </div>
+          </div>
+          
+          )}
+          
           {!isRunning && (
             <>
               <div className={`p-6 rounded-xl ${cardBg} border backdrop-blur-sm`}>
@@ -567,6 +614,7 @@ function App() {
           )}
         </aside>
       </main>
+      </div>
     </div>
   );
 }
