@@ -31,6 +31,21 @@ function App() {
     onHeadDown: () => beep(500, 800),
   });
 
+  const sendToGemini = async () => {
+    try {
+      const res = await fetch("http://localhost:5001/gemini", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: inputText }),
+      });
+      const data = await res.json();
+      console.log("Gemini response:", data.response);
+      alert(`Gemini says: ${data.response}`);
+    } catch (err) {
+      console.error("Error sending to Gemini:", err);
+    }
+  };
+
   // Webcam functions (reliable init & attach)
   const startWebcam = async () => {
     try {
@@ -103,6 +118,11 @@ function App() {
     await startWebcam();
     face.start();
     startTiming();
+
+    // 👇 Send the user's input text to Gemini when session starts
+    if (inputText.trim().length > 0) {
+      await sendToGemini();
+    }
   };
 
   const handleStop = () => {
@@ -254,7 +274,7 @@ function App() {
               <textarea
                 value={inputText}
                 onChange={(e) => setInputText(e.target.value)}
-                placeholder="How do you want to be woken up?"
+                placeholder="How do you want to be kept awake? (e.g. pep talk, scary voice, motivation)"
                 className="w-full px-4 py-3 bg-gray-800 border border-gray-600 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent resize-none"
                 rows={3}
               />
