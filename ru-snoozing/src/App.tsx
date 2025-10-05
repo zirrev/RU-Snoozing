@@ -35,7 +35,6 @@ function App() {
   const startWebcam = async () => {
     try {
       setWebcamError(null);
-      // stop any prior
       if (stream) {
         stream.getTracks().forEach(t => t.stop());
         setStream(null);
@@ -46,7 +45,6 @@ function App() {
       });
       setStream(mediaStream);
 
-      // attach after a small delay to ensure ref is mounted
       const attach = () => {
         const v = videoRef.current;
         if (v) {
@@ -72,7 +70,6 @@ function App() {
     if (v) (v as any).srcObject = null;
   };
 
-  // Cleanup on unmount
   useEffect(() => {
     return () => {
       stopWebcam();
@@ -81,11 +78,9 @@ function App() {
       }
       face.stop();
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const startTiming = () => {
-    // convert hours to ms, e.g., 1.5h -> 5400000 ms
     sessionMsRef.current = Math.max(0.1, focusDuration) * 60 * 60 * 1000;
     sessionStartRef.current = Date.now();
 
@@ -100,14 +95,14 @@ function App() {
         face.stop();
         stopWebcam();
       }
-    }, 250); // update 4x/sec
+    }, 250);
   };
 
   const handleStart = async () => {
     setIsRunning(true);
     await startWebcam();
-    face.start();       // begin landmark analysis
-    startTiming();      // begin real-time progress over the focus duration
+    face.start();
+    startTiming();
   };
 
   const handleStop = () => {
@@ -132,14 +127,12 @@ function App() {
     }
   };
 
-  // helper for mm:ss from progress & sessionMs
   const remainingMs = Math.max(0, sessionMsRef.current - (Date.now() - sessionStartRef.current));
   const mm = Math.floor(remainingMs / 60000).toString().padStart(2, '0');
   const ss = Math.floor((remainingMs % 60000) / 1000).toString().padStart(2, '0');
 
   return (
     <div className="min-h-screen bg-dark-bg text-soft-white font-sans">
-      {/* Header (MERGED: friend’s logo sizing/spacing) */}
       <header className="pt-8 pb-6">
         <div className="flex flex-col items-center space-y-2">
           <img
@@ -153,7 +146,6 @@ function App() {
         </div>
       </header>
 
-      {/* Main */}
       <main className="flex flex-col items-center px-6 max-w-4xl mx-auto">
         {/* Video Section */}
         <div className="relative mb-2">
@@ -213,18 +205,14 @@ function App() {
 
         {/* Awake/Drowsy status */}
         <div className="mb-6 text-sm text-gray-300 flex items-center gap-4">
-          <span>
-            Eyes: {face.eyeDrowsy ? 'Closed (alert)' : 'Open'}
-          </span>
-          <span>
-            Head: {face.headDown ? 'Down (alert)' : 'Level'}
-          </span>
+          <span>Eyes: {face.eyeDrowsy ? 'Closed (alert)' : 'Open'}</span>
+          <span>Head: {face.headDown ? 'Down (alert)' : 'Level'}</span>
           <span className="text-gray-400">
             EAR: {face.ear.toFixed(3)} • Pitch: {face.pitchDeg.toFixed(1)}°
           </span>
         </div>
 
-        {/* Controls Row */}
+        {/* Controls */}
         <div className="flex items-center gap-6 mb-8">
           <button
             onClick={handleStart}
@@ -244,7 +232,6 @@ function App() {
             <span>Stop</span>
           </button>
 
-          {/* Test beep */}
           <button
             onClick={() => beep(100, 1000)}
             className="px-3 py-2 bg-gray-700 hover:bg-gray-600 rounded text-sm"
@@ -253,7 +240,6 @@ function App() {
             Test Beep
           </button>
 
-          {/* Remaining time */}
           {isRunning && (
             <div className="text-sm text-gray-400">
               Remaining: {mm}:{ss}
@@ -261,7 +247,7 @@ function App() {
           )}
         </div>
 
-        {/* Text Input Box - Only show before session starts */}
+        {/* Text Input Box - only before session */}
         {!isRunning && (
           <div className="w-full max-w-md mb-6">
             <div className="space-y-2">
@@ -276,43 +262,40 @@ function App() {
           </div>
         )}
 
-        {/* Focus Control Section */}
-        <div className="w-full max-w-md space-y-6">
-          {/* Focus Duration Slider - Only show before session starts */}
-          {!isRunning && (
-            <div className="space-y-3">
-              <div className="flex justify-between items-center">
-                <label className="text-lg font-medium">Focus Duration</label>
-                <span className="text-xl font-bold text-green-400">
-                  {(() => {
-                    const totalMinutes = Math.round(focusDuration * 60); // convert to total minutes
-                    const hours = Math.floor(totalMinutes / 60);
-                    const minutes = totalMinutes % 60;
-                    return `${hours}h ${minutes}m`;
-                  })()}
-                </span>
-              </div>
-              <input
-                type="range"
-                min="0.0833"
-                max="3"
-                step="0.0833"
-                value={focusDuration}
-                onChange={(e) => setFocusDuration(parseFloat(e.target.value))}
-                className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer slider"
-                style={{
-                  background: `linear-gradient(to right, #10B981 0%, #10B981 ${(focusDuration / 3) * 100}%, #374151 ${(focusDuration / 3) * 100}%, #374151 100%)`
-                }}
-              />
-              <div className="flex justify-between text-sm text-gray-400">
-                <span>0.1h</span>
-                <span>3h</span>
-              </div>
+        {/* Focus Duration Slider - only before session */}
+        {!isRunning && (
+          <div className="w-full max-w-md space-y-3">
+            <div className="flex justify-between items-center">
+              <label className="text-lg font-medium">Focus Duration</label>
+              <span className="text-xl font-bold text-green-400">
+                {(() => {
+                  const totalMinutes = Math.round(focusDuration * 60);
+                  const hours = Math.floor(totalMinutes / 60);
+                  const minutes = totalMinutes % 60;
+                  return `${hours}h ${minutes}m`;
+                })()}
+              </span>
             </div>
-          )}
-        </div>
+            <input
+              type="range"
+              min="0.0833"
+              max="3"
+              step="0.0833"
+              value={focusDuration}
+              onChange={(e) => setFocusDuration(parseFloat(e.target.value))}
+              className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer slider"
+              style={{
+                background: `linear-gradient(to right, #10B981 0%, #10B981 ${(focusDuration / 3) * 100}%, #374151 ${(focusDuration / 3) * 100}%, #374151 100%)`
+              }}
+            />
+            <div className="flex justify-between text-sm text-gray-400">
+              <span>0.1h</span>
+              <span>3h</span>
+            </div>
+          </div>
+        )}
 
-        {/* Progress Bar - Show under controls when session is running */}
+        {/* Progress Bar */}
         {isRunning && (
           <div className="w-full max-w-md space-y-2">
             <div className="flex justify-between items-center">
@@ -327,52 +310,6 @@ function App() {
             </div>
           </div>
         )}
-
-        {/* Text Input Box - Only show before session starts */}
-        {!isRunning && (
-          <div className="w-full max-w-md mb-6">
-            <div className="space-y-2">
-              <textarea
-                value={inputText}
-                onChange={(e) => setInputText(e.target.value)}
-                placeholder="How do you want to be woken up?"
-                className="w-full px-4 py-3 bg-gray-800 border border-gray-600 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent resize-none"
-                rows={3}
-              />
-            </div>
-          </div>
-        )}
-
-        {/* Focus Control Section */}
-        <div className="w-full max-w-md space-y-6">
-          {/* Focus Duration Slider - Only show before session starts */}
-          {!isRunning && (
-            <div className="space-y-3">
-              <div className="flex justify-between items-center">
-                <label className="text-lg font-medium">Focus Duration</label>
-                <span className="text-xl font-bold text-green-400">
-                  {focusDuration.toFixed(1)}h
-                </span>
-              </div>
-              <input
-                type="range"
-                min="0.1"
-                max="3"
-                step="0.1"
-                value={focusDuration}
-                onChange={(e) => setFocusDuration(parseFloat(e.target.value))}
-                className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer slider"
-                style={{
-                  background: `linear-gradient(to right, #10B981 0%, #10B981 ${(focusDuration / 3) * 100}%, #374151 ${(focusDuration / 3) * 100}%, #374151 100%)`
-                }}
-              />
-              <div className="flex justify-between text-sm text-gray-400">
-                <span>0.1h</span>
-                <span>3h</span>
-              </div>
-            </div>
-          )}
-        </div>
       </main>
     </div>
   );
