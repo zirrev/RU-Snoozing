@@ -4,7 +4,7 @@ import { beep } from './beep';
 import { useFaceAwake } from './useFaceAwake';
 
 function App() {
-  const [focusDuration, setFocusDuration] = useState(1.5); // hours
+  const [focusDuration, setFocusDuration] = useState(1.5); // hours (slider controls this)
   const [showVideo, setShowVideo] = useState(true);
   const [isRunning, setIsRunning] = useState(false);
   const [progress, setProgress] = useState(0);
@@ -14,69 +14,61 @@ function App() {
   const [webcamError, setWebcamError] = useState<string | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
 
-  // Timer interval (browser type)
+  // Timer interval
   const progressIntervalRef = useRef<number | null>(null);
+  const sessionStartRef = useRef<number>(0);
+  const sessionMsRef = useRef<number>(0);
 
-  // Face drowsiness (EAR) detection
+  // Face detection: eyes closed (0.6s) AND head down (5s)
   const face = useFaceAwake({
     videoRef,
-    earThreshold: 0.18,      // tune: 0.16–0.22
-    dwellMs: 600,            // ms eyes must stay closed
-    onDrowsy: () => beep(600, 880),
+    earThreshold: 0.18,
+    eyeDwellMs: 600,
+    headDownPitchDeg: 15,  // tune 12–20
+    headDwellMs: 5000,     // 5s
+    onEyeDrowsy: () => beep(500, 1000),
+    onHeadDown: () => beep(500, 800),
   });
 
-  // Webcam functions
-  const stopWebcam = () => {
-    if (stream) {
-      stream.getTracks().forEach((track) => track.stop());
-      setStream(null);
-    }
-    if (videoRef.current) {
-      (videoRef.current as HTMLVideoElement).srcObject = null;
-    }
-  };
-
+  // Webcam functions (reliable init & attach)
   const startWebcam = async () => {
     try {
-      // Stop existing stream before starting new one
-      stopWebcam();
       setWebcamError(null);
+      // stop any prior
+      if (stream) {
+        stream.getTracks().forEach(t => t.stop());
+        setStream(null);
+      }
       const mediaStream = await navigator.mediaDevices.getUserMedia({
         video: { width: { ideal: 640 }, height: { ideal: 480 } },
         audio: false,
       });
       setStream(mediaStream);
 
-      // Delay to ensure video element is ready
-      setTimeout(() => {
-        if (videoRef.current) {
-          try {
-            videoRef.current.srcObject = mediaStream;
-            console.log('Webcam stream attached successfully.');
-          } catch (error) {
-            console.error('Failed to attach webcam stream, retrying...', error);
-            setTimeout(() => {
-              if (videoRef.current) {
-                try {
-                  videoRef.current.srcObject = mediaStream;
-                  console.log('Webcam stream attached on retry.');
-                } catch (retryError) {
-                  console.error('Retry failed to attach webcam stream:', retryError);
-                  setWebcamError('Unable to access webcam. Please check permissions.');
-                }
-              }
-            }, 300);
-          }
+      // attach after a small delay to ensure ref is mounted
+      const attach = () => {
+        const v = videoRef.current;
+        if (v) {
+          (v as any).srcObject = mediaStream;
+          v.play?.().catch(() => {});
         } else {
-          console.error('Video ref is not available.');
-          setWebcamError('Unable to access webcam. Please check permissions.');
+          setTimeout(attach, 150);
         }
-      }, 150);
-    } catch (error) {
+      };
+      attach();
+    } catch (error: any) {
       console.error('Error accessing webcam:', error);
       setWebcamError('Unable to access webcam. Please check permissions.');
-      throw error;
     }
+  };
+
+  const stopWebcam = () => {
+    if (stream) {
+      stream.getTracks().forEach(track => track.stop());
+      setStream(null);
+    }
+    const v = videoRef.current;
+    if (v) (v as any).srcObject = null;
   };
 
   // Cleanup on unmount
@@ -91,32 +83,30 @@ function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const handleStart = async () => {
-    setIsRunning(true);
-    try {
-      await startWebcam();
-    } catch (error) {
-      setIsRunning(false);
-      return;
-    }
+  const startTiming = () => {
+    // convert hours to ms, e.g., 1.5h -> 5400000 ms
+    sessionMsRef.current = Math.max(0.1, focusDuration) * 60 * 60 * 1000;
+    sessionStartRef.current = Date.now();
 
-    // Start face analysis once video is ready
-    face.start();
-
-    // Simple progress simulation (0→100)
     if (progressIntervalRef.current) window.clearInterval(progressIntervalRef.current);
     progressIntervalRef.current = window.setInterval(() => {
-      setProgress((prev) => {
-        if (prev >= 100) {
-          if (progressIntervalRef.current) window.clearInterval(progressIntervalRef.current);
-          setIsRunning(false);
-          face.stop();
-          stopWebcam();
-          return 0;
-        }
-        return prev + 1;
-      });
-    }, 100);
+      const elapsed = Date.now() - sessionStartRef.current;
+      const pct = Math.min(100, (elapsed / sessionMsRef.current) * 100);
+      setProgress(pct);
+      if (pct >= 100) {
+        if (progressIntervalRef.current) window.clearInterval(progressIntervalRef.current);
+        setIsRunning(false);
+        face.stop();
+        stopWebcam();
+      }
+    }, 250); // update 4x/sec
+  };
+
+  const handleStart = async () => {
+    setIsRunning(true);
+    await startWebcam();
+    face.start();       // begin landmark analysis
+    startTiming();      // begin real-time progress over the focus duration
   };
 
   const handleStop = () => {
@@ -141,12 +131,22 @@ function App() {
     }
   };
 
+  // helper for mm:ss from progress & sessionMs
+  const remainingMs = Math.max(0, sessionMsRef.current - (Date.now() - sessionStartRef.current));
+  const mm = Math.floor(remainingMs / 60000).toString().padStart(2, '0');
+  const ss = Math.floor((remainingMs % 60000) / 1000).toString().padStart(2, '0');
+
   return (
     <div className="min-h-screen bg-dark-bg text-soft-white font-sans">
-      {/* Header */}
+      {/* Header (MERGED: friend’s logo sizing/spacing) */}
       <header className="pt-8 pb-6">
-        <div className="flex flex-col items-center space-y-4">
-          <img src="/logo.svg" alt="RU Snoozing Logo" className="w-16 h-16" />
+        <div className="flex flex-col items-center space-y-2">
+          <img
+            src="/logo.svg"
+            alt="RU Snoozing Logo"
+            style={{ width: '140px', height: '110px' }}
+            className="mb-1"
+          />
           <h1 className="text-3xl font-bold text-center">RU Snoozing</h1>
           <p className="text-lg text-gray-400 text-center">Stay awake. Stay focused.</p>
         </div>
@@ -159,7 +159,7 @@ function App() {
           {showVideo ? (
             <div
               className={`w-96 h-64 rounded-lg border-2 overflow-hidden transition-all
-              ${face.drowsy ? 'border-red-500 ring-2 ring-red-500' : 'border-gray-700'}`}
+              ${(face.eyeDrowsy || face.headDown) ? 'border-red-500 ring-2 ring-red-500' : 'border-gray-700'}`}
             >
               {stream ? (
                 <video
@@ -199,11 +199,11 @@ function App() {
           >
             <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
               {showVideo ? (
-                <path fillRule="evenodd" d="M3.707 2.293a1 1 0 00-1.414 1.414l14 14a1 1 0 001.414-1.414l-1.473-1.473A10.014 10.014 0 0019.542 10C18.268 5.943 14.478 3 10 3a9.958 9.958 0 00-4.512 1.074l-1.78-1.781zm4.261 4.26l1.514 1.515a2.003 2.003 0 012.45 2.45l1.514 1.514a4 4 0 00-5.478-5.478z" clipRule="evenodd"/>
+                <path fillRule="evenodd" d="M3.707 2.293a1 1 0 00-1.414 1.414l14 14a1 1 0 001.414-1.414l-1.473-1.473A10.014 10.014 0 0019.542 10C18.268 5.943 14.478 3 10 3a9.958 9.958 0 00-4.512 1.074l-1.78-1.781zm4.261 4.26l1.514 1.515a2.003 2.003 0 012.45 2.45l1.514 1.514a4 4 0 00-5.478-5.478z" />
               ) : (
                 <>
-                  <path d="M10 12a2 2 0 100-4 2 2 0 000 4z"/>
-                  <path fillRule="evenodd" d="M.458 10C1.732 5.943 5.522 3 10 3s8.268 2.943 9.542 7c-1.274 4.057-5.064 7-9.542 7S1.732 14.057.458 10zM14 10a4 4 0 11-8 0 4 4 0 018 0z" clipRule="evenodd"/>
+                  <path d="M10 12a2 2 0 100-4 2 2 0 000 4z" />
+                  <path fillRule="evenodd" d="M.458 10C1.732 5.943 5.522 3 10 3s8.268 2.943 9.542 7c-1.274 4.057-5.064 7-9.542 7S1.732 14.057.458 10zM14 10a4 4 0 11-8 0 4 4 0 018 0z" />
                 </>
               )}
             </svg>
@@ -213,9 +213,14 @@ function App() {
         {/* Awake/Drowsy status */}
         <div className="mb-6 text-sm text-gray-300 flex items-center gap-4">
           <span>
-            Face: {face.ready ? (face.analyzing ? (face.drowsy ? 'DROWSY 😴' : 'Awake 😎') : 'ready') : 'loading...'}
+            Eyes: {face.eyeDrowsy ? 'Closed (alert)' : 'Open'}
           </span>
-          <span className="text-gray-400">EAR: {face.ear.toFixed(3)}</span>
+          <span>
+            Head: {face.headDown ? 'Down (alert)' : 'Level'}
+          </span>
+          <span className="text-gray-400">
+            EAR: {face.ear.toFixed(3)} • Pitch: {face.pitchDeg.toFixed(1)}°
+          </span>
         </div>
 
         {/* Controls Row */}
@@ -240,12 +245,19 @@ function App() {
 
           {/* Test beep */}
           <button
-            onClick={() => beep(500, 880)}
+            onClick={() => beep(100, 1000)}
             className="px-3 py-2 bg-gray-700 hover:bg-gray-600 rounded text-sm"
             title="Play a short test beep"
           >
             Test Beep
           </button>
+
+          {/* Remaining time */}
+          {isRunning && (
+            <div className="text-sm text-gray-400">
+              Remaining: {mm}:{ss}
+            </div>
+          )}
         </div>
 
         {/* Focus Control Section */}
@@ -260,7 +272,7 @@ function App() {
             </div>
             <input
               type="range"
-              min="0"
+              min="0.1"
               max="3"
               step="0.1"
               value={focusDuration}
@@ -271,7 +283,7 @@ function App() {
               }}
             />
             <div className="flex justify-between text-sm text-gray-400">
-              <span>0h</span>
+              <span>0.1h</span>
               <span>3h</span>
             </div>
           </div>
@@ -280,7 +292,7 @@ function App() {
           <div className="space-y-2">
             <div className="flex justify-between items-center">
               <span className="text-sm font-medium">Session Progress</span>
-              <span className="text-sm text-gray-400">{progress}%</span>
+              <span className="text-sm text-gray-400">{Math.round(progress)}%</span>
             </div>
             <div className="w-full bg-gray-700 rounded-full h-3">
               <div

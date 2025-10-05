@@ -1,7 +1,7 @@
+// src/useFaceAwake.ts
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { MutableRefObject } from "react";
 
-// Keep types loose for hackathon speed
 type MPFilesetResolver = any;
 type MPFaceLandmarker = any;
 
@@ -9,15 +9,15 @@ type FaceAwakeOpts = {
   videoRef: MutableRefObject<HTMLVideoElement | null>;
 
   // Eye-closure (EAR) options
-  earThreshold?: number;
-  eyeDwellMs?: number;
+  earThreshold?: number;     // lower => more sensitive to "closed"
+  eyeDwellMs?: number;       // ms EAR must stay below threshold
 
   // Head-down options
-  headDownPitchDeg?: number;
-  headDwellMs?: number;
+  headDownPitchDeg?: number; // degrees (downward tilt threshold)
+  headDwellMs?: number;      // ms pitch must exceed threshold
 
-  onEyeDrowsy?: () => void;
-  onHeadDown?: () => void;
+  onEyeDrowsy?: () => void;  // called when eyes closed sustained
+  onHeadDown?: () => void;   // called when head down sustained
 };
 
 const MODEL_URL =
@@ -27,23 +27,18 @@ export function useFaceAwake({
   videoRef,
   earThreshold = 0.18,
   eyeDwellMs = 600,
-  headDownPitchDeg = 15,
-  headDwellMs = 5000,
+  headDownPitchDeg = 15,      // tune 12–20
+  headDwellMs = 5000,         // 5 seconds as requested
   onEyeDrowsy,
   onHeadDown,
 }: FaceAwakeOpts) {
   const [ready, setReady] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
-
-  // Live metrics (for UI/debug)
   const [ear, setEAR] = useState(0);
   const [pitchDeg, setPitchDeg] = useState(0);
-
-  // State flags the app uses
   const [eyeDrowsy, setEyeDrowsy] = useState(false);
   const [headDown, setHeadDown] = useState(false);
 
-  // internals
   const rafRef = useRef<number | null>(null);
   const landmarkerRef = useRef<any>(null);
 
@@ -52,10 +47,9 @@ export function useFaceAwake({
   const lastEyeTriggerRef = useRef<number>(0);
   const lastHeadTriggerRef = useRef<number>(0);
 
-  // ---- load model once
+  // --- load model once
   const load = useCallback(async () => {
     if (landmarkerRef.current) return;
-
     const mod = await import("@mediapipe/tasks-vision");
     const { FilesetResolver, FaceLandmarker } = mod as {
       FilesetResolver: MPFilesetResolver;
@@ -77,12 +71,9 @@ export function useFaceAwake({
     setReady(true);
   }, []);
 
-  // ---- helpers
+  // --- helpers
   const dist = (a: any, b: any) => Math.hypot(a.x - b.x, a.y - b.y);
-
   // EAR using FaceMesh indices
-  // Left: 33-133 (H), 159-145 & 158-153 (V)
-  // Right: 263-362 (H), 386-374 & 385-380 (V)
   const computeEAR = (lm: any[]) => {
     const L = { H1: lm[33], H2: lm[133], V1a: lm[159], V1b: lm[145], V2a: lm[158], V2b: lm[153] };
     const R = { H1: lm[263], H2: lm[362], V1a: lm[386], V1b: lm[374], V2a: lm[385], V2b: lm[380] };
@@ -96,18 +87,19 @@ export function useFaceAwake({
    * Approximate pitch (downward tilt) using forehead (10) and chin (152) 3D landmarks.
    * We look at the vector from forehead -> chin in (y, z) plane:
    *   pitch = atan2(Δz, Δy) in degrees
-   * Positive magnitude means stronger tilt; we compare |pitch| to threshold.
+   * Positive pitch means chin is more forward relative to forehead (head down toward camera).
+   * Threshold is tunable in degrees.
    */
   const computePitchDeg = (lm: any[]) => {
-    const top = lm[10];   // forehead/top
+    const top = lm[10];   // forehead / top
     const chin = lm[152]; // chin
     const dy = (chin.y - top.y);
-    const dz = (chin.z - top.z); // sign varies by device; we use magnitude
+    const dz = (chin.z - top.z); // MediaPipe z is in image coords; sign may vary by device, but relative change works
     const angle = Math.atan2(dz, dy) * (180 / Math.PI);
     return angle;
   };
 
-  // ---- analysis loop
+  // --- analysis loop
   const analyze = useCallback(() => {
     const video = videoRef.current;
     const landmarker = landmarkerRef.current;
@@ -120,13 +112,13 @@ export function useFaceAwake({
     if (face) {
       // EAR
       const curEAR = computeEAR(face);
-      setEAR(prev => prev * 0.6 + curEAR * 0.4);
+      setEAR((prev) => prev * 0.6 + curEAR * 0.4);
 
-      // Pitch (deg)
+      // Pitch
       const curPitch = computePitchDeg(face);
-      setPitchDeg(prev => prev * 0.7 + curPitch * 0.3);
+      setPitchDeg((prev) => prev * 0.7 + curPitch * 0.3);
 
-      // Eye-closure dwell
+      // Eye drowsy dwell
       if (curEAR < earThreshold) {
         if (eyeBelowSinceRef.current == null) eyeBelowSinceRef.current = t;
         if (t - (eyeBelowSinceRef.current ?? t) >= eyeDwellMs) {
@@ -141,7 +133,7 @@ export function useFaceAwake({
         setEyeDrowsy(false);
       }
 
-      // Head-down dwell (use absolute pitch)
+      // Head-down dwell
       if (Math.abs(curPitch) >= headDownPitchDeg) {
         if (headDownSinceRef.current == null) headDownSinceRef.current = t;
         if (t - (headDownSinceRef.current ?? t) >= headDwellMs) {
@@ -163,23 +155,16 @@ export function useFaceAwake({
     rafRef.current = requestAnimationFrame(analyze);
   }, [videoRef, earThreshold, eyeDwellMs, headDownPitchDeg, headDwellMs, onEyeDrowsy, onHeadDown]);
 
-  // ---- public controls
+  // --- public controls
   const start = useCallback(async () => {
     await load();
     const video = videoRef.current;
     if (!video) return;
-
-    // Wait until <video> has frames
     if (video.readyState < 2) {
       await new Promise<void>((resolve) => {
-        const handler = () => {
-          video.removeEventListener('loadeddata', handler);
-          resolve();
-        };
-        video.addEventListener('loadeddata', handler, { once: true });
+        video.onloadeddata = () => resolve();
       });
     }
-
     if (rafRef.current) cancelAnimationFrame(rafRef.current);
     setAnalyzing(true);
     rafRef.current = requestAnimationFrame(analyze);
@@ -200,10 +185,12 @@ export function useFaceAwake({
   return {
     ready,
     analyzing,
+    // live metrics (for UI/debug)
     ear,
     pitchDeg,
     eyeDrowsy,
     headDown,
+    // controls
     start,
     stop,
   };
