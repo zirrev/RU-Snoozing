@@ -2,6 +2,13 @@
 
 RU Snoozing is a web application designed to help users manage and optimize their rest and nap schedules. Built with React and a modern front-end stack, this project aims to provide an intuitive interface for tracking, analyzing, and improving snoozing habits.
 
+---
+
+🏆 **Awarded 2x at HackRU Fall 25!**  
+RU Snoozing is a proud double winner at HackRU Fall 2025, recognized for innovation and impact.
+
+---
+
 ## Features
 
 - 📅 **Schedule Management:** Plan and record your naps or snoozing sessions.
